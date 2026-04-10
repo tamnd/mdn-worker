@@ -1,56 +1,55 @@
 # mdn-worker
 
-**Vietnamese MDN Web Docs** — a full, ad-free mirror of [MDN Web Docs](https://developer.mozilla.org) with Vietnamese translations, deployed on Cloudflare Workers.
+Vietnamese version of [MDN Web Docs](https://developer.mozilla.org), built with MDN's own tools and served on Cloudflare Workers.
 
-**Live:** [mdn.go-mizu.dev](https://mdn.go-mizu.dev)
-
----
+**Live at [mdn.go-mizu.dev](https://mdn.go-mizu.dev)**
 
 ## Features
 
-- **100% MDN look & feel** — uses MDN's own build tools ([rari](https://github.com/nickinprice/rari) + [Fred](https://github.com/nickinprice/fred)) for pixel-perfect rendering
-- **Vietnamese translations** — pre-built pages from [mdn-translated-content-vi](https://github.com/nickinprice/mdn-translated-content-vi) served as `/vi/docs/...`
-- **Ad-free** — all ad placements and banners stripped from every page
-- **Transparent fallback** — pages without a Vietnamese translation are fetched from upstream MDN and served with Vietnamese locale rewriting
-- **Fast** — static assets served from Cloudflare's edge; HTML rewriting happens in the Worker
+- Looks exactly like MDN because it *is* MDN, built with the same toolchain ([rari](https://github.com/nickinprice/rari) and [Fred](https://github.com/nickinprice/fred))
+- Vietnamese translated pages from [mdn-translated-content-vi](https://github.com/nickinprice/mdn-translated-content-vi) are pre-built and served as `/vi/docs/...`
+- Pages that don't have a translation yet are fetched from upstream MDN on the fly, with locale paths rewritten to `/vi/`
+- Static assets are served straight from Cloudflare's edge, so it's fast
+
+## How it works
+
+MDN's build tool `rari` doesn't support the `vi` locale. So we work around it:
+
+1. Copy the full en-US content tree to a temp directory
+2. Overlay Vietnamese markdown files onto the matching en-US slug paths (with rari's special character encoding like `::` to `_doublecolon_`)
+3. Build everything as en-US using `rari build`
+4. Render the JSON output to HTML with Fred's SSR
+5. Export only the pages that have Vietnamese translations to `dist/vi/`
+6. Rewrite all `/en-US/` references to `/vi/` in the HTML
+
+The Cloudflare Worker then serves these pre-built pages. For anything not in the static export, it proxies upstream MDN and rewrites the locale on the fly.
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                  Cloudflare Worker                   │
-│                                                     │
-│   /  ──────────────── 302 → /vi/                    │
-│   /en-US/* ────────── 302 → /vi/*                   │
-│   /vi/docs/* ──┬───── static asset (pre-built HTML) │
-│                └───── proxy MDN /en-US/* → rewrite   │
-│   /* ─────────────── proxy upstream MDN              │
-└─────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────┐
+│                  Cloudflare Worker                    │
+│                                                      │
+│   /            redirect to /vi/                      │
+│   /en-US/*     redirect to /vi/*                     │
+│   /vi/docs/*   serve static HTML or proxy from MDN   │
+│   /*           proxy upstream MDN                    │
+└──────────────────────────────────────────────────────┘
 ```
 
-**Build pipeline** (runs in `scripts/export-static.mjs`):
-
-1. Symlink en-US content from `mdn-translated-content-vi` as base
-2. Overlay Vietnamese `.md` files onto en-US using slug-based path mapping
-3. Build markdown → JSON with `rari build`
-4. Render JSON → HTML with `fred-ssr`
-5. Export only Vietnamese-translated pages to `dist/vi/`
-6. Rewrite `/en-US/` → `/vi/` and strip ads in all HTML
-
-## Quick Start
+## Quick start
 
 ### Prerequisites
 
 - Node.js 22+
-- [mdn-translated-content-vi](https://github.com/nickinprice/mdn-translated-content-vi) cloned alongside this repo (with `npm install` done)
+- [mdn-translated-content-vi](https://github.com/nickinprice/mdn-translated-content-vi) cloned next to this repo, with `npm install` already done
 
-### Build & Preview
+### Build and preview
 
 ```bash
-# Install dependencies
 npm install
 
-# Build static pages (~4 min)
+# Build static pages (takes about 4 minutes)
 npm run build:static
 
 # Preview locally at http://127.0.0.1:8787
@@ -60,52 +59,39 @@ npm run preview
 ### Deploy
 
 ```bash
-# Build + deploy to Cloudflare Workers
+# Build and deploy to Cloudflare Workers in one step
 npm run deploy
 
-# Or deploy with wrangler directly (if dist/ is already built)
+# Or if dist/ is already built, just deploy
 npx wrangler deploy
 ```
 
 ### Development
 
 ```bash
-# Run wrangler dev server (uses dist/ for static assets, proxies the rest)
+# Start wrangler dev server (serves from dist/, proxies the rest)
 npm run dev
 ```
 
-## Project Structure
+## Project structure
 
 ```
 mdn-worker/
 ├── src/
-│   └── index.ts              # Cloudflare Worker entry point
+│   └── index.ts              # Cloudflare Worker
 ├── scripts/
-│   ├── export-static.mjs     # Build pipeline: md → HTML static export
-│   └── preview-local.mjs     # Local preview server with proxy fallback
+│   ├── export-static.mjs     # Build pipeline (md to HTML)
+│   └── preview-local.mjs     # Local preview server
 ├── dist/                     # Built output (gitignored)
 │   ├── vi/docs/              # Pre-rendered Vietnamese pages
-│   └── static/               # CSS, JS, fonts from Fred
-├── wrangler.jsonc            # Cloudflare Workers config
+│   └── static/               # CSS, JS, fonts
+├── wrangler.jsonc
 ├── tsconfig.json
 └── package.json
 ```
 
-## How It Works
-
-MDN's build tool `rari` doesn't support the `vi` locale natively. This project works around that by:
-
-1. **Copying** the full en-US content tree to a temp directory
-2. **Overlaying** Vietnamese markdown files at the correct en-US slug paths (handling rari's special character encoding: `::` → `_doublecolon_`, `:` → `_colon_`, `*` → `_star_`)
-3. **Building** the merged content as en-US with `rari build --no-basic --content`
-4. **Rendering** with Fred's SSR to get full HTML pages
-5. **Selectively exporting** only pages that have Vietnamese translations
-6. **Rewriting** all locale references from en-US to vi
-
-The Cloudflare Worker then serves these pre-built pages and falls back to proxying upstream MDN for anything not in the static export.
-
 ## License
 
-The code in this repository (Worker, build scripts) is licensed under the [MIT License](LICENSE).
+Code in this repo is [MIT licensed](LICENSE).
 
-MDN Web Docs content is licensed under [CC-BY-SA 2.5](https://creativecommons.org/licenses/by-sa/2.5/) by Mozilla and individual contributors. See the [MDN License](https://github.com/nickinprice/mdn-content/blob/main/LICENSE.md) for full details.
+MDN content is licensed under [CC-BY-SA 2.5](https://creativecommons.org/licenses/by-sa/2.5/) by Mozilla and individual contributors. See the [MDN License](https://github.com/mdn/content/blob/main/LICENSE.md) for details.
