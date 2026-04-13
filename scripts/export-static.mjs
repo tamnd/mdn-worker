@@ -204,6 +204,22 @@ if (rariResult.status !== 0) {
   process.exit(1);
 }
 
+// ── Step 4.5: Install vi.ftl into fred's locales ─────────────────────
+const VI_FTL_SRC = path.join(CONTENT_REPO, "translate", "vi.ftl");
+const VI_FTL_DEST = path.join(
+  CONTENT_REPO,
+  "node_modules",
+  "@mdn",
+  "fred",
+  "l10n",
+  "locales",
+  "vi.ftl",
+);
+if (existsSync(VI_FTL_SRC)) {
+  cpSync(VI_FTL_SRC, VI_FTL_DEST);
+  console.log("  Installed vi.ftl into fred locales.");
+}
+
 // ── Step 5: Render with Fred SSR ─────────────────────────────────────
 console.log("\n[5/6] Rendering HTML with Fred SSR...");
 
@@ -281,6 +297,115 @@ for (const slug of viSlugs) {
     .replaceAll('"locale":"en-US"', '"locale":"vi"')
     .replaceAll('"English (US)"', '"Tiếng Việt"')
     .replaceAll(">English (US)<", ">Tiếng Việt<");
+
+  // ── Vietnamese UI string replacements ────────────────────────────────
+  // Navigation / accessibility
+  html = html
+    .replaceAll(">Skip to main content<", ">Chuyển đến nội dung chính<")
+    .replaceAll(">Skip to search<", ">Chuyển đến tìm kiếm<")
+    .replaceAll(">Toggle navigation<", ">Bật/tắt điều hướng<")
+    .replaceAll(">Toggle sidebar<", ">Ẩn/hiện thanh bên<")
+    .replaceAll(">Filter sidebar<", ">Lọc thanh bên<")
+    .replaceAll(' placeholder="Filter"', ' placeholder="Lọc"')
+    .replaceAll(">Clear filter input<", ">Xóa bộ lọc<")
+    .replaceAll(">In this article<", ">Trong bài này<");
+
+  // Article footer
+  html = html
+    .replaceAll(">Help improve MDN<", ">Giúp cải thiện MDN<")
+    .replaceAll(">Learn how to contribute<", ">Tìm hiểu cách đóng góp<")
+    .replaceAll(">View this page on GitHub<", ">Xem trang này trên GitHub<")
+    .replaceAll(">Report a problem with this content<", ">Báo cáo sự cố với nội dung này<")
+    .replaceAll("This will take you to GitHub to file a new issue.", "Điều này sẽ đưa bạn đến GitHub để gửi sự cố mới.");
+
+  // Baseline
+  html = html
+    .replaceAll(">Widely available<", ">Khả dụng rộng rãi<")
+    .replaceAll(">Newly available<", ">Mới khả dụng<")
+    .replaceAll(">Limited availability<", ">Khả dụng hạn chế<")
+    .replaceAll(">See full compatibility<", ">Xem tương thích đầy đủ<")
+    .replaceAll(">Report feedback<", ">Báo cáo phản hồi<");
+
+  // Compat table labels (baked into SSR HTML)
+  html = html
+    .replaceAll(">Full support<", ">Hỗ trợ đầy đủ<")
+    .replaceAll(">Partial support<", ">Hỗ trợ một phần<")
+    .replaceAll(">No support<", ">Không hỗ trợ<")
+    .replaceAll(">Support unknown<", ">Không rõ hỗ trợ<")
+    .replaceAll(">Experimental<", ">Thử nghiệm<")
+    .replaceAll(">Deprecated<", ">Đã lỗi thời<")
+    .replaceAll(">Non-standard<", ">Không chuẩn<")
+    .replaceAll(">Legend<", ">Chú giải<")
+    .replaceAll(">Enable JavaScript to view this browser compatibility table.<",
+      ">Bật JavaScript để xem bảng tương thích trình duyệt này.<")
+    .replaceAll(">Report problems with this compatibility data<",
+      ">Báo cáo sự cố với dữ liệu tương thích này<")
+    .replaceAll(">View data on GitHub<", ">Xem dữ liệu trên GitHub<")
+    .replaceAll(">Loading…<", ">Đang tải…<");
+
+  // Copy button
+  html = html
+    .replaceAll(">Copy<", ">Sao chép<")
+    .replaceAll(">Copied<", ">Đã sao chép<");
+
+  // Color theme
+  html = html
+    .replaceAll(">OS default<", ">Mặc định hệ điều hành<")
+    .replaceAll(">Light<", ">Sáng<")
+    .replaceAll(">Dark<", ">Tối<")
+    .replaceAll(">Switch color theme<", ">Đổi giao diện màu<");
+
+  // Search
+  html = html
+    .replaceAll(">Search the site<", ">Tìm kiếm trên trang<")
+    .replaceAll(' placeholder="Search"', ' placeholder="Tìm kiếm"')
+    .replaceAll(">Exit search<", ">Đóng tìm kiếm<")
+    .replaceAll(">Loading search index…<", ">Đang tải chỉ mục tìm kiếm…<")
+    .replaceAll(">Did you mean…<", ">Ý bạn là…<");
+
+  // Content feedback
+  html = html
+    .replaceAll(">Was this page helpful to you?<", ">Trang này có hữu ích với bạn không?<")
+    .replaceAll(">Thank you for your feedback!<", ">Cảm ơn phản hồi của bạn!<")
+    .replaceAll(">Why was this page not helpful to you?<",
+      ">Tại sao trang này không hữu ích với bạn?<");
+
+  // Footer
+  html = html
+    .replaceAll(">Advertise with us<", ">Quảng cáo với chúng tôi<")
+    .replaceAll(">Community Participation Guidelines<", ">Hướng dẫn tham gia cộng đồng<")
+    .replaceAll(">Your blueprint for a better internet.<", ">Nền tảng cho một internet tốt hơn.<")
+    .replaceAll(">Community resources<", ">Tài nguyên cộng đồng<")
+    .replaceAll(">Writing guidelines<", ">Hướng dẫn viết bài<")
+    .replaceAll(">Learn web development<", ">Học phát triển web<")
+    .replaceAll(">Web technologies<", ">Công nghệ web<")
+    .replaceAll(">Mozilla careers<", ">Nghề nghiệp Mozilla<")
+    .replaceAll(">Telemetry Settings<", ">Cài đặt Telemetry<")
+    .replaceAll(">Website Privacy Notice<", ">Thông báo quyền riêng tư<")
+    .replaceAll(">Hacks blog<", ">Blog Hacks<")
+    .replaceAll(">MDN blog RSS feed<", ">Nguồn RSS blog MDN<");
+
+  // Language switcher
+  html = html
+    .replaceAll(">Remember language<", ">Ghi nhớ ngôn ngữ<");
+
+  // Pagination
+  html = html
+    .replaceAll(">Next page<", ">Trang tiếp theo<")
+    .replaceAll(">Previous page<", ">Trang trước<");
+
+  // 404
+  html = html
+    .replaceAll(">Page not found<", ">Không tìm thấy trang<")
+    .replaceAll(">Go back to the home page<", ">Quay lại trang chủ<");
+
+  // Specifications
+  html = html
+    .replaceAll(">Specification<", ">Thông số kỹ thuật<")
+    .replaceAll(
+      ">This feature does not appear to be defined in any specification.<",
+      ">Tính năng này dường như chưa được định nghĩa trong bất kỳ thông số kỹ thuật nào.<",
+    );
 
   // Strip ads/banners
   html = html.replace(
