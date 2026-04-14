@@ -511,6 +511,19 @@ for (const dir of buildStaticDirs) {
   }
 }
 
+// Copy the Vietnamese Inter font subset into the static assets
+const VI_FONT_SRC = path.resolve("./fonts/inter-vietnamese.woff2");
+const VI_FONT_DEST = path.join(DIST_DIR, "static", "client", "inter-vietnamese.woff2");
+if (existsSync(VI_FONT_SRC)) {
+  cpSync(VI_FONT_SRC, VI_FONT_DEST);
+  console.log("  Copied inter-vietnamese.woff2.");
+}
+
+// @font-face rule to inject — fills the U+1EA0-U+1EF9 gap in the subsetted Inter fonts.
+// The bundled inter-latin-extended.woff2 covers up to U+1E9F; Vietnamese tonal characters
+// (ấ, ề, ổ, ữ, etc.) start at U+1EA0, so the browser falls back to system fonts without this.
+const VI_FONT_STYLE = `<style>@font-face{font-display:swap;font-family:Inter;font-style:normal;font-weight:100 900;src:url(/static/client/inter-vietnamese.woff2) format("woff2");unicode-range:u+1ea0-u+1ef9,u+20ab}</style>`;
+
 // Copy SPA pages (search, homepage, etc.)
 const spaDirs = ["_spas"];
 for (const dir of spaDirs) {
@@ -560,6 +573,12 @@ for (const slug of viSlugs) {
       `datetime="${isoDate}">${displayDate}</time>`,
     );
   }
+
+  // Inject Vietnamese Inter font-face rule to cover U+1EA0-U+1EF9 (tonal characters)
+  html = html.replace("</head>", VI_FONT_STYLE + "</head>");
+
+  // Remove language switcher — single-language site, the dropdown is pointless
+  html = html.replace(/<mdn-language-switcher[\s\S]*?<\/mdn-language-switcher>/gi, "");
 
   // Strip ads/banners
   html = html.replace(
