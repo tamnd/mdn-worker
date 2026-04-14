@@ -144,6 +144,8 @@ cpSync(
   { recursive: true },
 );
 
+const viSlugToFile = new Map(); // slug → relFile (for date lookup)
+
 let overwritten = 0;
 let created = 0;
 let skipped = 0;
@@ -158,6 +160,7 @@ for (const relFile of viFiles) {
     continue;
   }
   viSlugs.push(slug);
+  viSlugToFile.set(slug, relFile);
 
   // Place file at the path matching its slug, using rari's encoding
   const diskPath = slugToDiskPath(slug);
@@ -238,6 +241,198 @@ if (ssrResult.status !== 0) {
   process.exit(1);
 }
 
+// ── Pre-step: Build git last-modified date map for all vi files ───────
+// Rari reads files from a temp dir that has no git history, so all pages
+// end up with the 1970 epoch date. We fix this by reading git dates from
+// the actual source repo and patching the HTML during export.
+const gitDates = new Map(); // relFile → ISO date string
+try {
+  const rawLog = execSync(
+    'git log --format="COMMIT %cI" --name-only -- files/vi/',
+    { cwd: CONTENT_REPO, encoding: "utf8", maxBuffer: 50_000_000 }
+  );
+  let currentDate = null;
+  for (const line of rawLog.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("COMMIT ")) {
+      currentDate = trimmed.slice(7);
+    } else if (trimmed.startsWith("files/vi/") && currentDate) {
+      const relFile = trimmed.slice("files/vi/".length);
+      if (!gitDates.has(relFile)) {
+        gitDates.set(relFile, currentDate);
+      }
+    }
+  }
+  console.log(`  Loaded git dates for ${gitDates.size} vi files.`);
+} catch {
+  console.warn("  Warning: could not load git dates, dates will show today.");
+}
+
+// ── UI translation table ──────────────────────────────────────────────
+// All [from, to] string replacements applied to every exported HTML page.
+// Ordered so longer/more-specific strings come before shorter ones.
+const UI_TRANSLATIONS = [
+  // Locale paths
+  ["/en-US/docs/", "/vi/docs/"],
+  ["/en-US/search", "/vi/search"],
+  ['hreflang="en-US"', 'hreflang="vi"'],
+  ['hreflang="en"', 'hreflang="vi"'],
+  ['lang="en-US"', 'lang="vi"'],
+  ['lang="en"', 'lang="vi"'],
+  ['"locale":"en-US"', '"locale":"vi"'],
+  ['"English (US)"', '"Tiếng Việt"'],
+  [">English (US)<", ">Tiếng Việt<"],
+
+  // Navigation / accessibility
+  [">Skip to main content<", ">Chuyển đến nội dung chính<"],
+  [">Skip to search<", ">Chuyển đến tìm kiếm<"],
+  [">Toggle navigation<", ">Bật/tắt điều hướng<"],
+  ['aria-label="Toggle navigation"', 'aria-label="Bật/tắt điều hướng"'],
+  [">Toggle sidebar<", ">Ẩn/hiện thanh bên<"],
+  [">Filter sidebar<", ">Lọc thanh bên<"],
+  [' placeholder="Filter"', ' placeholder="Lọc"'],
+  [">Clear filter input<", ">Xóa bộ lọc<"],
+  [">In this article<", ">Trong bài này<"],
+
+  // Article footer
+  [">Help improve MDN<", ">Giúp cải thiện MDN<"],
+  [">Learn how to contribute<", ">Tìm hiểu cách đóng góp<"],
+  [">View this page on GitHub<", ">Xem trang này trên GitHub<"],
+  [">Report a problem with this content<", ">Báo cáo sự cố với nội dung này<"],
+  ["This will take you to GitHub to file a new issue.", "Điều này sẽ đưa bạn đến GitHub để gửi sự cố mới."],
+  ["This page was last modified on", "Trang này được sửa đổi lần cuối vào"],
+  ["</time> by <a", "</time> bởi <a"],
+  [">MDN contributors<", ">những người đóng góp MDN<"],
+
+  // Baseline
+  [">Widely available<", ">Khả dụng rộng rãi<"],
+  [">Newly available<", ">Mới khả dụng<"],
+  [">Limited availability<", ">Khả dụng hạn chế<"],
+  [">See full compatibility<", ">Xem tương thích đầy đủ<"],
+  [">Report feedback<", ">Báo cáo phản hồi<"],
+
+  // Compat table
+  [">Full support<", ">Hỗ trợ đầy đủ<"],
+  [">Partial support<", ">Hỗ trợ một phần<"],
+  [">No support<", ">Không hỗ trợ<"],
+  [">Support unknown<", ">Không rõ hỗ trợ<"],
+  [">Experimental<", ">Thử nghiệm<"],
+  [">Deprecated<", ">Đã lỗi thời<"],
+  [">Non-standard<", ">Không chuẩn<"],
+  [">Legend<", ">Chú giải<"],
+  [">Enable JavaScript to view this browser compatibility table.<", ">Bật JavaScript để xem bảng tương thích trình duyệt này.<"],
+  [">Report problems with this compatibility data<", ">Báo cáo sự cố với dữ liệu tương thích này<"],
+  [">View data on GitHub<", ">Xem dữ liệu trên GitHub<"],
+  [">Loading…<", ">Đang tải…<"],
+
+  // Copy button
+  [">Copy<", ">Sao chép<"],
+  [">Copied<", ">Đã sao chép<"],
+
+  // Color theme
+  [">OS default<", ">Mặc định hệ điều hành<"],
+  [">Light<", ">Sáng<"],
+  [">Dark<", ">Tối<"],
+  [">Switch color theme<", ">Đổi giao diện màu<"],
+  ['aria-label="Switch color theme"', 'aria-label="Đổi giao diện màu"'],
+
+  // Search
+  [">Search the site<", ">Tìm kiếm trên trang<"],
+  ['title="Search the site"', 'title="Tìm kiếm trên trang"'],
+  [' placeholder="Search"', ' placeholder="Tìm kiếm"'],
+  [">Exit search<", ">Đóng tìm kiếm<"],
+  [">Loading search index…<", ">Đang tải chỉ mục tìm kiếm…<"],
+  [">Did you mean…<", ">Ý bạn là…<"],
+
+  // Content feedback
+  [">Was this page helpful to you?<", ">Trang này có hữu ích với bạn không?<"],
+  [">Thank you for your feedback!<", ">Cảm ơn phản hồi của bạn!<"],
+  [">Why was this page not helpful to you?<", ">Tại sao trang này không hữu ích với bạn?<"],
+
+  // Footer links and social
+  [">Advertise with us<", ">Quảng cáo với chúng tôi<"],
+  [">Community Participation Guidelines<", ">Hướng dẫn tham gia cộng đồng<"],
+  [">Your blueprint for a better internet.<", ">Nền tảng cho một internet tốt hơn.<"],
+  [">Community resources<", ">Tài nguyên cộng đồng<"],
+  [">Writing guidelines<", ">Hướng dẫn viết bài<"],
+  [">Learn web development<", ">Học phát triển web<"],
+  [">Web technologies<", ">Công nghệ web<"],
+  [">Mozilla careers<", ">Nghề nghiệp Mozilla<"],
+  [">Telemetry Settings<", ">Cài đặt Telemetry<"],
+  [">Website Privacy Notice<", ">Thông báo quyền riêng tư<"],
+  [">Hacks blog<", ">Blog Hacks<"],
+  [">MDN blog RSS feed<", ">Nguồn RSS blog MDN<"],
+  ['aria-label="MDN blog RSS feed"', 'aria-label="Nguồn RSS blog MDN"'],
+  ['title="MDN Blog RSS Feed"', 'title="Nguồn RSS Blog MDN"'],
+  [">MDN on GitHub<", ">MDN trên GitHub<"],
+  [">MDN on Bluesky<", ">MDN trên Bluesky<"],
+  [">MDN on Mastodon<", ">MDN trên Mastodon<"],
+  [">MDN on X<", ">MDN trên X<"],
+  ['aria-label="MDN on GitHub"', 'aria-label="MDN trên GitHub"'],
+  ['aria-label="MDN on Bluesky"', 'aria-label="MDN trên Bluesky"'],
+  ['aria-label="MDN on Mastodon"', 'aria-label="MDN trên Mastodon"'],
+  ['aria-label="MDN on X"', 'aria-label="MDN trên X"'],
+  ['aria-label="MDN logo"', 'aria-label="Logo MDN"'],
+  ['aria-label="Mozilla logo"', 'aria-label="Logo Mozilla"'],
+
+  // Language switcher
+  [">Remember language<", ">Ghi nhớ ngôn ngữ<"],
+
+  // Pagination
+  [">Next page<", ">Trang tiếp theo<"],
+  [">Previous page<", ">Trang trước<"],
+
+  // 404
+  [">Page not found<", ">Không tìm thấy trang<"],
+  [">Go back to the home page<", ">Quay lại trang chủ<"],
+
+  // Navigation mega-menu section titles
+  [">HTML: Markup language<", ">HTML: Ngôn ngữ đánh dấu<"],
+  [">CSS: Styling language<", ">CSS: Ngôn ngữ tạo kiểu<"],
+  [">JavaScript: Scripting language<", ">JavaScript: Ngôn ngữ kịch bản<"],
+  [">Web APIs: Programming interfaces<", ">Web API: Giao diện lập trình<"],
+  ["Get to know MDN better", "Tìm hiểu thêm về MDN"],
+  ["Discover our tools", "Khám phá công cụ của chúng tôi"],
+  [">About MDN<", ">Giới thiệu MDN<"],
+  [">See all…<", ">Xem tất cả…<"],
+  [">Web documentation<", ">Tài liệu web<"],
+
+  // Navigation "See all" aria-labels and titles (quoted strings match both attrs)
+  ['"See all HTML references"', '"Xem tất cả tham chiếu HTML"'],
+  ['"See all HTML guides"', '"Xem tất cả hướng dẫn HTML"'],
+  ['"See all CSS references"', '"Xem tất cả tham chiếu CSS"'],
+  ['"See all CSS guides"', '"Xem tất cả hướng dẫn CSS"'],
+  ['"See all JavaScript references"', '"Xem tất cả tham chiếu JavaScript"'],
+  ['"See all JavaScript guides"', '"Xem tất cả hướng dẫn JavaScript"'],
+  ['"See all Web API guides"', '"Xem tất cả hướng dẫn Web API"'],
+  ['"See all web technology references"', '"Xem tất cả tham chiếu công nghệ web"'],
+
+  // Navigation category headers (dt elements in mega-menu)
+  ["<dt>HTML reference</dt>", "<dt>Tham chiếu HTML</dt>"],
+  ["<dt>HTML guides</dt>", "<dt>Hướng dẫn HTML</dt>"],
+  ["<dt>CSS reference</dt>", "<dt>Tham chiếu CSS</dt>"],
+  ["<dt>CSS guides</dt>", "<dt>Hướng dẫn CSS</dt>"],
+  ["<dt>JS reference</dt>", "<dt>Tham chiếu JavaScript</dt>"],
+  ["<dt>JS guides</dt>", "<dt>Hướng dẫn JavaScript</dt>"],
+  ["<dt>Web API reference</dt>", "<dt>Tham chiếu Web API</dt>"],
+  ["<dt>Web API guides</dt>", "<dt>Hướng dẫn Web API</dt>"],
+  ["<dt>Markup languages</dt>", "<dt>Ngôn ngữ đánh dấu</dt>"],
+  ["<dt>Frontend developer course</dt>", "<dt>Khóa học nhà phát triển frontend</dt>"],
+  ["<dt>Learn HTML</dt>", "<dt>Học HTML</dt>"],
+  ["<dt>Learn CSS</dt>", "<dt>Học CSS</dt>"],
+  ["<dt>Learn JavaScript</dt>", "<dt>Học JavaScript</dt>"],
+  ["<dt>Layout cookbook</dt>", "<dt>Sách hướng dẫn bố cục</dt>"],
+  ["<dt>Technologies</dt>", "<dt>Công nghệ</dt>"],
+  ["<dt>Topics</dt>", "<dt>Chủ đề</dt>"],
+  ["<dt>Contribute</dt>", "<dt>Đóng góp</dt>"],
+  ["<dt>Developers</dt>", "<dt>Nhà phát triển</dt>"],
+
+  // Specifications
+  [">Specification<", ">Thông số kỹ thuật<"],
+  [">This feature does not appear to be defined in any specification.<",
+    ">Tính năng này dường như chưa được định nghĩa trong bất kỳ thông số kỹ thuật nào.<"],
+];
+
 // ── Step 6: Copy translated pages to dist/ and rewrite paths ─────────
 console.log("\n[6/6] Exporting Vietnamese pages to dist/...");
 rmSync(DIST_DIR, { recursive: true, force: true });
@@ -286,126 +481,26 @@ for (const slug of viSlugs) {
 
   let html = readFileSync(buildHTML, "utf8");
 
-  // Rewrite locale paths: /en-US/ → /vi/
-  html = html
-    .replaceAll("/en-US/docs/", "/vi/docs/")
-    .replaceAll("/en-US/search", "/vi/search")
-    .replaceAll('hreflang="en-US"', 'hreflang="vi"')
-    .replaceAll('hreflang="en"', 'hreflang="vi"')
-    .replaceAll('lang="en-US"', 'lang="vi"')
-    .replaceAll('lang="en"', 'lang="vi"')
-    .replaceAll('"locale":"en-US"', '"locale":"vi"')
-    .replaceAll('"English (US)"', '"Tiếng Việt"')
-    .replaceAll(">English (US)<", ">Tiếng Việt<");
+  // Apply all UI translations from the lookup table
+  for (const [from, to] of UI_TRANSLATIONS) {
+    html = html.replaceAll(from, to);
+  }
 
-  // ── Vietnamese UI string replacements ────────────────────────────────
-  // Navigation / accessibility
-  html = html
-    .replaceAll(">Skip to main content<", ">Chuyển đến nội dung chính<")
-    .replaceAll(">Skip to search<", ">Chuyển đến tìm kiếm<")
-    .replaceAll(">Toggle navigation<", ">Bật/tắt điều hướng<")
-    .replaceAll(">Toggle sidebar<", ">Ẩn/hiện thanh bên<")
-    .replaceAll(">Filter sidebar<", ">Lọc thanh bên<")
-    .replaceAll(' placeholder="Filter"', ' placeholder="Lọc"')
-    .replaceAll(">Clear filter input<", ">Xóa bộ lọc<")
-    .replaceAll(">In this article<", ">Trong bài này<");
-
-  // Article footer
-  html = html
-    .replaceAll(">Help improve MDN<", ">Giúp cải thiện MDN<")
-    .replaceAll(">Learn how to contribute<", ">Tìm hiểu cách đóng góp<")
-    .replaceAll(">View this page on GitHub<", ">Xem trang này trên GitHub<")
-    .replaceAll(">Report a problem with this content<", ">Báo cáo sự cố với nội dung này<")
-    .replaceAll("This will take you to GitHub to file a new issue.", "Điều này sẽ đưa bạn đến GitHub để gửi sự cố mới.");
-
-  // Baseline
-  html = html
-    .replaceAll(">Widely available<", ">Khả dụng rộng rãi<")
-    .replaceAll(">Newly available<", ">Mới khả dụng<")
-    .replaceAll(">Limited availability<", ">Khả dụng hạn chế<")
-    .replaceAll(">See full compatibility<", ">Xem tương thích đầy đủ<")
-    .replaceAll(">Report feedback<", ">Báo cáo phản hồi<");
-
-  // Compat table labels (baked into SSR HTML)
-  html = html
-    .replaceAll(">Full support<", ">Hỗ trợ đầy đủ<")
-    .replaceAll(">Partial support<", ">Hỗ trợ một phần<")
-    .replaceAll(">No support<", ">Không hỗ trợ<")
-    .replaceAll(">Support unknown<", ">Không rõ hỗ trợ<")
-    .replaceAll(">Experimental<", ">Thử nghiệm<")
-    .replaceAll(">Deprecated<", ">Đã lỗi thời<")
-    .replaceAll(">Non-standard<", ">Không chuẩn<")
-    .replaceAll(">Legend<", ">Chú giải<")
-    .replaceAll(">Enable JavaScript to view this browser compatibility table.<",
-      ">Bật JavaScript để xem bảng tương thích trình duyệt này.<")
-    .replaceAll(">Report problems with this compatibility data<",
-      ">Báo cáo sự cố với dữ liệu tương thích này<")
-    .replaceAll(">View data on GitHub<", ">Xem dữ liệu trên GitHub<")
-    .replaceAll(">Loading…<", ">Đang tải…<");
-
-  // Copy button
-  html = html
-    .replaceAll(">Copy<", ">Sao chép<")
-    .replaceAll(">Copied<", ">Đã sao chép<");
-
-  // Color theme
-  html = html
-    .replaceAll(">OS default<", ">Mặc định hệ điều hành<")
-    .replaceAll(">Light<", ">Sáng<")
-    .replaceAll(">Dark<", ">Tối<")
-    .replaceAll(">Switch color theme<", ">Đổi giao diện màu<");
-
-  // Search
-  html = html
-    .replaceAll(">Search the site<", ">Tìm kiếm trên trang<")
-    .replaceAll(' placeholder="Search"', ' placeholder="Tìm kiếm"')
-    .replaceAll(">Exit search<", ">Đóng tìm kiếm<")
-    .replaceAll(">Loading search index…<", ">Đang tải chỉ mục tìm kiếm…<")
-    .replaceAll(">Did you mean…<", ">Ý bạn là…<");
-
-  // Content feedback
-  html = html
-    .replaceAll(">Was this page helpful to you?<", ">Trang này có hữu ích với bạn không?<")
-    .replaceAll(">Thank you for your feedback!<", ">Cảm ơn phản hồi của bạn!<")
-    .replaceAll(">Why was this page not helpful to you?<",
-      ">Tại sao trang này không hữu ích với bạn?<");
-
-  // Footer
-  html = html
-    .replaceAll(">Advertise with us<", ">Quảng cáo với chúng tôi<")
-    .replaceAll(">Community Participation Guidelines<", ">Hướng dẫn tham gia cộng đồng<")
-    .replaceAll(">Your blueprint for a better internet.<", ">Nền tảng cho một internet tốt hơn.<")
-    .replaceAll(">Community resources<", ">Tài nguyên cộng đồng<")
-    .replaceAll(">Writing guidelines<", ">Hướng dẫn viết bài<")
-    .replaceAll(">Learn web development<", ">Học phát triển web<")
-    .replaceAll(">Web technologies<", ">Công nghệ web<")
-    .replaceAll(">Mozilla careers<", ">Nghề nghiệp Mozilla<")
-    .replaceAll(">Telemetry Settings<", ">Cài đặt Telemetry<")
-    .replaceAll(">Website Privacy Notice<", ">Thông báo quyền riêng tư<")
-    .replaceAll(">Hacks blog<", ">Blog Hacks<")
-    .replaceAll(">MDN blog RSS feed<", ">Nguồn RSS blog MDN<");
-
-  // Language switcher
-  html = html
-    .replaceAll(">Remember language<", ">Ghi nhớ ngôn ngữ<");
-
-  // Pagination
-  html = html
-    .replaceAll(">Next page<", ">Trang tiếp theo<")
-    .replaceAll(">Previous page<", ">Trang trước<");
-
-  // 404
-  html = html
-    .replaceAll(">Page not found<", ">Không tìm thấy trang<")
-    .replaceAll(">Go back to the home page<", ">Quay lại trang chủ<");
-
-  // Specifications
-  html = html
-    .replaceAll(">Specification<", ">Thông số kỹ thuật<")
-    .replaceAll(
-      ">This feature does not appear to be defined in any specification.<",
-      ">Tính năng này dường như chưa được định nghĩa trong bất kỳ thông số kỹ thuật nào.<",
+  // Fix epoch date (1970-01-01) with the actual git last-modified date.
+  // Rari can't read git history from the temp build dir, so all pages
+  // default to epoch. We patch it here using the pre-built gitDates map.
+  if (html.includes("1970-01-01T00:00:00.000Z")) {
+    const relFile = viSlugToFile.get(slug);
+    const isoDate = (relFile && gitDates.get(relFile)) ?? new Date().toISOString();
+    const d = new Date(isoDate);
+    const displayDate = d.toLocaleDateString("vi-VN", {
+      year: "numeric", month: "long", day: "numeric",
+    });
+    html = html.replace(
+      /datetime="1970-01-01T00:00:00\.000Z">[^<]*<\/time>/g,
+      `datetime="${isoDate}">${displayDate}</time>`,
     );
+  }
 
   // Strip ads/banners
   html = html.replace(
