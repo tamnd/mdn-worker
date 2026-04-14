@@ -577,12 +577,15 @@ for (const slug of viSlugs) {
 
   // Apply sidebar label translations derived from YAML vi: l10n sections.
   // Two contexts: <summary><span> (section headers) and >LABEL</a> (module list page links).
-  // The >LABEL</a> replacement is safe for our translated pages because article content
-  // is in Vietnamese; only YAML-generated sidebar links remain in English.
+  // HTML entities (&amp; &lt; &gt;) are encoded in the sidebar HTML — try both plain and encoded forms.
   for (const [enLabel, viLabel] of sidebarLabelTranslations) {
+    const enEncoded = enLabel.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+    const viEncoded = viLabel.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
     html = html.replaceAll(`<summary><span>${enLabel}</span>`, `<summary><span>${viLabel}</span>`);
+    html = html.replaceAll(`<summary><span>${enEncoded}</span>`, `<summary><span>${viEncoded}</span>`);
     // Links may use multiline formatting (">LABEL</a\n      >") — match without trailing >
     html = html.replaceAll(`>${enLabel}</a`, `>${viLabel}</a`);
+    html = html.replaceAll(`>${enEncoded}</a`, `>${viEncoded}</a`);
   }
 
   // Fix epoch date (1970-01-01) with the actual last-modified date.

@@ -1,97 +1,77 @@
 # mdn-worker
 
-Vietnamese version of [MDN Web Docs](https://developer.mozilla.org), built with MDN's own tools and served on Cloudflare Workers.
+MDN Web Docs, but in Vietnamese. Built with the same toolchain as the real MDN and hosted on Cloudflare Workers.
 
-**Live at [mdn.go-mizu.dev](https://mdn.go-mizu.dev)**
+**https://mdn.go-mizu.dev**
 
-## Features
+## What this does
 
-- Looks exactly like MDN because it *is* MDN, built with the same toolchain ([rari](https://github.com/nickinprice/rari) and [Fred](https://github.com/nickinprice/fred))
-- Vietnamese translated pages from [mdn-translated-content-vi](https://github.com/nickinprice/mdn-translated-content-vi) are pre-built and served as `/vi/docs/...`
-- Pages that don't have a translation yet are fetched from upstream MDN on the fly, with locale paths rewritten to `/vi/`
-- Static assets are served straight from Cloudflare's edge, so it's fast
+Vietnamese translations from [mdn-translated-content-vi](https://github.com/nickinprice/mdn-translated-content-vi) get pre-built into static HTML and served at `/vi/docs/...`. If a page hasn't been translated yet, the worker fetches it from the real MDN and swaps the locale to `/vi/` so the site feels complete.
 
-## How it works
+It looks like MDN because it is MDN. Same build tool ([rari](https://github.com/nickinprice/rari)), same renderer ([Fred](https://github.com/nickinprice/fred)).
 
-MDN's build tool `rari` doesn't support the `vi` locale. So we work around it:
+## How the build works
 
-1. Copy the full en-US content tree to a temp directory
-2. Overlay Vietnamese markdown files onto the matching en-US slug paths (with rari's special character encoding like `::` to `_doublecolon_`)
-3. Build everything as en-US using `rari build`
-4. Render the JSON output to HTML with Fred's SSR
-5. Export only the pages that have Vietnamese translations to `dist/vi/`
-6. Rewrite all `/en-US/` references to `/vi/` in the HTML
+rari doesn't support `vi` as a locale, so we trick it:
 
-The Cloudflare Worker then serves these pre-built pages. For anything not in the static export, it proxies upstream MDN and rewrites the locale on the fly.
+1. Copy the en-US content tree to a temp directory
+2. Drop the Vietnamese markdown files on top of the matching en-US paths
+3. Build everything as en-US with `rari build`
+4. Render JSON to HTML with Fred SSR
+5. Keep only the pages that have a Vietnamese translation
+6. Replace `/en-US/` with `/vi/` in the output HTML
 
-## Architecture
+The worker serves these static pages. Anything missing gets proxied from upstream MDN with the locale rewritten on the fly.
+
+## Routing
 
 ```
-┌──────────────────────────────────────────────────────┐
-│                  Cloudflare Worker                    │
-│                                                      │
-│   /            redirect to /vi/                      │
-│   /en-US/*     redirect to /vi/*                     │
-│   /vi/docs/*   serve static HTML or proxy from MDN   │
-│   /*           proxy upstream MDN                    │
-└──────────────────────────────────────────────────────┘
+/            -> redirect to /vi/
+/en-US/*     -> redirect to /vi/*
+/vi/docs/*   -> static HTML, or proxy from MDN
+/*           -> proxy upstream MDN
 ```
 
-## Quick start
+## Setup
 
-### Prerequisites
-
-- Node.js 22+
-- [mdn-translated-content-vi](https://github.com/nickinprice/mdn-translated-content-vi) cloned next to this repo, with `npm install` already done
-
-### Build and preview
+You need Node.js 22+ and [mdn-translated-content-vi](https://github.com/nickinprice/mdn-translated-content-vi) cloned next to this repo with `npm install` done.
 
 ```bash
 npm install
 
-# Build static pages (takes about 4 minutes)
+# Build static pages (~4 minutes)
 npm run build:static
 
-# Preview locally at http://127.0.0.1:8787
+# Preview at http://127.0.0.1:8787
 npm run preview
 ```
 
-### Deploy
+## Deploy
 
 ```bash
-# Build and deploy to Cloudflare Workers in one step
+# Build + deploy
 npm run deploy
 
-# Or if dist/ is already built, just deploy
+# Or just deploy if dist/ is already built
 npx wrangler deploy
 ```
 
-### Development
+## Dev
 
 ```bash
-# Start wrangler dev server (serves from dist/, proxies the rest)
 npm run dev
 ```
 
-## Project structure
+## Structure
 
 ```
-mdn-worker/
-├── src/
-│   └── index.ts              # Cloudflare Worker
-├── scripts/
-│   ├── export-static.mjs     # Build pipeline (md to HTML)
-│   └── preview-local.mjs     # Local preview server
-├── dist/                     # Built output (gitignored)
-│   ├── vi/docs/              # Pre-rendered Vietnamese pages
-│   └── static/               # CSS, JS, fonts
-├── wrangler.jsonc
-├── tsconfig.json
-└── package.json
+src/index.ts              Worker (routing, proxying)
+scripts/export-static.mjs Build pipeline (md -> HTML)
+scripts/preview-local.mjs Local preview server
+dist/                     Build output (gitignored)
+wrangler.jsonc            Cloudflare config
 ```
 
 ## License
 
-Code in this repo is [MIT licensed](LICENSE).
-
-MDN content is licensed under [CC-BY-SA 2.5](https://creativecommons.org/licenses/by-sa/2.5/) by Mozilla and individual contributors. See the [MDN License](https://github.com/mdn/content/blob/main/LICENSE.md) for details.
+Code is MIT. MDN content is [CC-BY-SA 2.5](https://creativecommons.org/licenses/by-sa/2.5/) by Mozilla and contributors.
