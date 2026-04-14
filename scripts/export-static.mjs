@@ -305,6 +305,25 @@ try {
   }
 } catch { /* non-fatal */ }
 
+// ── Sidebar label translations ────────────────────────────────────────
+// Read translate/sidebar-labels.json: English label → Vietnamese label.
+// Applied as <summary><span> replacements and sidebar link text replacements.
+const sidebarLabelTranslations = [];
+{
+  const labelFile = path.join(CONTENT_REPO, "translate", "sidebar-labels.json");
+  if (existsSync(labelFile)) {
+    const labels = JSON.parse(readFileSync(labelFile, "utf8"));
+    for (const [enLabel, viLabel] of Object.entries(labels)) {
+      if (!enLabel.startsWith("_") && enLabel !== viLabel) {
+        sidebarLabelTranslations.push([enLabel, viLabel]);
+      }
+    }
+    // Sort longer labels first to avoid partial replacements
+    sidebarLabelTranslations.sort((a, b) => b[0].length - a[0].length);
+    console.log(`  Loaded ${sidebarLabelTranslations.length} sidebar label translations.`);
+  }
+}
+
 // ── UI translation table ──────────────────────────────────────────────
 // All [from, to] string replacements applied to every exported HTML page.
 // Ordered so longer/more-specific strings come before shorter ones.
@@ -554,6 +573,16 @@ for (const slug of viSlugs) {
   // Entries may be [string, string] or [RegExp, string].
   for (const [from, to] of UI_TRANSLATIONS) {
     html = from instanceof RegExp ? html.replace(from, to) : html.replaceAll(from, to);
+  }
+
+  // Apply sidebar label translations derived from YAML vi: l10n sections.
+  // Two contexts: <summary><span> (section headers) and >LABEL</a> (module list page links).
+  // The >LABEL</a> replacement is safe for our translated pages because article content
+  // is in Vietnamese; only YAML-generated sidebar links remain in English.
+  for (const [enLabel, viLabel] of sidebarLabelTranslations) {
+    html = html.replaceAll(`<summary><span>${enLabel}</span>`, `<summary><span>${viLabel}</span>`);
+    // Links may use multiline formatting (">LABEL</a\n      >") — match without trailing >
+    html = html.replaceAll(`>${enLabel}</a`, `>${viLabel}</a`);
   }
 
   // Fix epoch date (1970-01-01) with the actual last-modified date.
