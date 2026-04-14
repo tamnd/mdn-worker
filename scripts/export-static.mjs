@@ -241,32 +241,69 @@ if (ssrResult.status !== 0) {
   process.exit(1);
 }
 
-// ── Pre-step: Build git last-modified date map for all vi files ───────
-// Rari reads files from a temp dir that has no git history, so all pages
-// end up with the 1970 epoch date. We fix this by reading git dates from
-// the actual source repo and patching the HTML during export.
-const gitDates = new Map(); // relFile → ISO date string
+// ── Pre-step: Build last-modified date map from English source ────────
+// Rari reads from a temp dir with no git history → all pages show 1970.
+// Primary source: tamnd/mdn-content git history (accurate, reflects when
+// the English content actually changed). Fallback: vi translation commit date.
+const EN_CONTENT_REPO = path.resolve(CONTENT_REPO, "../mdn-content");
+
+// Build a map: en-US disk path (e.g. "web/html/guides/index.md") → ISO date
+const enGitDates = new Map();
+if (existsSync(EN_CONTENT_REPO)) {
+  try {
+    // Build list of en-US paths we need, derived from the vi slugs we'll export
+    const neededPaths = viSlugs.map(s => `files/en-us/${slugToDiskPath(s)}/index.md`);
+    const BATCH = 400;
+    let loaded = 0;
+    for (let i = 0; i < neededPaths.length; i += BATCH) {
+      const batch = neededPaths.slice(i, i + BATCH);
+      const result = spawnSync(
+        "git",
+        ["log", "--format=COMMIT %cI", "--name-only", "--no-merges", "--"].concat(batch),
+        { cwd: EN_CONTENT_REPO, encoding: "utf8", maxBuffer: 50_000_000, timeout: 60_000 },
+      );
+      if (result.stdout) {
+        let currentDate = null;
+        for (const line of result.stdout.split("\n")) {
+          const t = line.trim();
+          if (t.startsWith("COMMIT ")) {
+            currentDate = t.slice(7);
+          } else if (t.startsWith("files/en-us/") && currentDate) {
+            const rel = t.slice("files/en-us/".length);
+            if (!enGitDates.has(rel)) {
+              enGitDates.set(rel, currentDate);
+              loaded++;
+            }
+          }
+        }
+      }
+    }
+    console.log(`  Loaded en-US git dates for ${loaded} pages from mdn-content.`);
+  } catch (e) {
+    console.warn("  Warning: could not load en-US git dates:", e.message);
+  }
+} else {
+  console.warn(`  mdn-content not found at ${EN_CONTENT_REPO}, dates will fall back to vi commit date.`);
+}
+
+// Fallback: vi file commit dates (used when en-US date not available)
+const viGitDates = new Map();
 try {
   const rawLog = execSync(
     'git log --format="COMMIT %cI" --name-only -- files/vi/',
-    { cwd: CONTENT_REPO, encoding: "utf8", maxBuffer: 50_000_000 }
+    { cwd: CONTENT_REPO, encoding: "utf8", maxBuffer: 50_000_000 },
   );
   let currentDate = null;
   for (const line of rawLog.split("\n")) {
-    const trimmed = line.trim();
-    if (trimmed.startsWith("COMMIT ")) {
-      currentDate = trimmed.slice(7);
-    } else if (trimmed.startsWith("files/vi/") && currentDate) {
-      const relFile = trimmed.slice("files/vi/".length);
-      if (!gitDates.has(relFile)) {
-        gitDates.set(relFile, currentDate);
-      }
+    const t = line.trim();
+    if (t.startsWith("COMMIT ")) {
+      currentDate = t.slice(7);
+    } else if (t.startsWith("files/vi/") && currentDate) {
+      const rel = t.slice("files/vi/".length);
+      if (!viGitDates.has(rel)) viGitDates.set(rel, currentDate);
     }
   }
-  console.log(`  Loaded git dates for ${gitDates.size} vi files.`);
-} catch {
-  console.warn("  Warning: could not load git dates, dates will show today.");
-}
+} catch { /* non-fatal */ }
 
 // ── UI translation table ──────────────────────────────────────────────
 // All [from, to] string replacements applied to every exported HTML page.
@@ -349,18 +386,24 @@ const UI_TRANSLATIONS = [
   [">Thank you for your feedback!<", ">Cảm ơn phản hồi của bạn!<"],
   [">Why was this page not helpful to you?<", ">Tại sao trang này không hữu ích với bạn?<"],
 
-  // Footer links and social
-  [">Advertise with us<", ">Quảng cáo với chúng tôi<"],
-  [">Community Participation Guidelines<", ">Hướng dẫn tham gia cộng đồng<"],
-  [">Your blueprint for a better internet.<", ">Nền tảng cho một internet tốt hơn.<"],
-  [">Community resources<", ">Tài nguyên cộng đồng<"],
-  [">Writing guidelines<", ">Hướng dẫn viết bài<"],
-  [">Learn web development<", ">Học phát triển web<"],
-  [">Web technologies<", ">Công nghệ web<"],
-  [">Mozilla careers<", ">Nghề nghiệp Mozilla<"],
-  [">Telemetry Settings<", ">Cài đặt Telemetry<"],
-  [">Website Privacy Notice<", ">Thông báo quyền riêng tư<"],
-  [">Hacks blog<", ">Blog Hacks<"],
+  // Footer text — uses newlines around text nodes so we match bare text,
+  // not ">...<" delimiters. Multi-word phrases are safe from URL collisions.
+  ["Your blueprint for a better internet.", "Nền tảng cho một internet tốt hơn."],
+  ["Advertise with us", "Quảng cáo với chúng tôi"],
+  ["Community Participation Guidelines", "Hướng dẫn tham gia cộng đồng"],
+  ["Community resources", "Tài nguyên cộng đồng"],
+  ["Writing guidelines", "Hướng dẫn viết bài"],
+  ["Learn web development", "Học phát triển web"],
+  ["Web technologies", "Công nghệ web"],
+  ["Mozilla careers", "Nghề nghiệp Mozilla"],
+  ["Telemetry Settings", "Cài đặt Telemetry"],
+  ["Website Privacy Notice", "Thông báo quyền riêng tư"],
+  ["Hacks blog", "Blog Hacks"],
+  ["MDN Community", "Cộng đồng MDN"],
+  ["Product help", "Trợ giúp sản phẩm"],
+  // "About" as sole link text in footer (regex avoids replacing in URLs or prose)
+  [/>\s*About\s*<\/a>/g, ">Giới thiệu</a>"],
+  // Social links
   [">MDN blog RSS feed<", ">Nguồn RSS blog MDN<"],
   ['aria-label="MDN blog RSS feed"', 'aria-label="Nguồn RSS blog MDN"'],
   ['title="MDN Blog RSS Feed"', 'title="Nguồn RSS Blog MDN"'],
@@ -386,6 +429,9 @@ const UI_TRANSLATIONS = [
   [">Page not found<", ">Không tìm thấy trang<"],
   [">Go back to the home page<", ">Quay lại trang chủ<"],
 
+  // Sidebar section headers (plain text match for whitespace tolerance)
+  [">Further resources<", ">Tài nguyên thêm<"],
+
   // Navigation mega-menu section titles
   [">HTML: Markup language<", ">HTML: Ngôn ngữ đánh dấu<"],
   [">CSS: Styling language<", ">CSS: Ngôn ngữ tạo kiểu<"],
@@ -396,6 +442,9 @@ const UI_TRANSLATIONS = [
   [">About MDN<", ">Giới thiệu MDN<"],
   [">See all…<", ">Xem tất cả…<"],
   [">Web documentation<", ">Tài liệu web<"],
+  [">All web technology<", ">Tất cả công nghệ web<"],
+  ["Getting started modules", "Mô-đun bắt đầu"],
+  ["Core modules", "Mô-đun cốt lõi"],
 
   // Navigation "See all" aria-labels and titles (quoted strings match both attrs)
   ['"See all HTML references"', '"Xem tất cả tham chiếu HTML"'],
@@ -481,19 +530,22 @@ for (const slug of viSlugs) {
 
   let html = readFileSync(buildHTML, "utf8");
 
-  // Apply all UI translations from the lookup table
+  // Apply all UI translations from the lookup table.
+  // Entries may be [string, string] or [RegExp, string].
   for (const [from, to] of UI_TRANSLATIONS) {
-    html = html.replaceAll(from, to);
+    html = from instanceof RegExp ? html.replace(from, to) : html.replaceAll(from, to);
   }
 
-  // Fix epoch date (1970-01-01) with the actual git last-modified date.
-  // Rari can't read git history from the temp build dir, so all pages
-  // default to epoch. We patch it here using the pre-built gitDates map.
+  // Fix epoch date (1970-01-01) with the actual last-modified date.
+  // Priority: en-US source date (most accurate) → vi commit date → build date.
   if (html.includes("1970-01-01T00:00:00.000Z")) {
-    const relFile = viSlugToFile.get(slug);
-    const isoDate = (relFile && gitDates.get(relFile)) ?? new Date().toISOString();
-    const d = new Date(isoDate);
-    const displayDate = d.toLocaleDateString("vi-VN", {
+    const enPath = `${diskPath}/index.md`;
+    const viRelFile = viSlugToFile.get(slug);
+    const isoDate =
+      enGitDates.get(enPath) ??
+      (viRelFile && viGitDates.get(viRelFile)) ??
+      new Date().toISOString();
+    const displayDate = new Date(isoDate).toLocaleDateString("vi-VN", {
       year: "numeric", month: "long", day: "numeric",
     });
     html = html.replace(
