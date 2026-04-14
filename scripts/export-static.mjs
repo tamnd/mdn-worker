@@ -431,6 +431,13 @@ const UI_TRANSLATIONS = [
 
   // Sidebar section headers (plain text match for whitespace tolerance)
   [">Further resources<", ">Tài nguyên thêm<"],
+  [">Extension modules<", ">Mô-đun mở rộng<"],
+  [">Additional tutorials<", ">Hướng dẫn bổ sung<"],
+
+  // Navigation tab buttons (scoped to menu__tab-label class to avoid content collisions)
+  [/class="menu__tab-label"\s*>All<\/span/g, 'class="menu__tab-label">Tất cả</span'],
+  [/class="menu__tab-label"\s*>Learn<\/span/g, 'class="menu__tab-label">Học</span'],
+  [/class="menu__tab-label"\s*>Tools<\/span/g, 'class="menu__tab-label">Công cụ</span'],
 
   // Navigation mega-menu section titles
   [">HTML: Markup language<", ">HTML: Ngôn ngữ đánh dấu<"],
